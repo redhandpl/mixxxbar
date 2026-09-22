@@ -16,33 +16,17 @@ Completed:
 
 - [x] MIT `LICENSE` added.
 - [x] Root `.gitignore` added for Python caches, virtual environments, secrets, logs, recordings, and editor files.
-- [x] `--demo --once` added to `mixxx_display.py`.
-- [x] `--host` added with a default of `10.0.4.20`.
-- [x] Existing positional host argument remains supported.
-- [x] Demo mode skips MIDI, `ffmpeg`, and the BUSY switch stream.
-- [x] 16 unit tests pass.
+- [x] `--demo --once` and `--host` added to `mixxx_display.py`.
+- [x] Demo loop accepted as sufficient for the first gallery release.
+- [x] Demo sequence covers deck start, BPM tuning, crossfader handoff, reload, and cycle reset.
+- [x] BUSY delivery errors, `409` handling, resource cleanup, and end-of-track icon state are covered.
+- [x] Pixel-based deck icons are used for emulator and hardware parity.
+- [x] 26 unit tests pass.
 - [x] Python syntax and LSP diagnostics are clean.
 
 ## Critical path
 
-### 1. Full preview demo modes
-
-Extend the demo mode so previews can render each display mode independently and cycle through both modes:
-
-```text
---demo --mode status --once
---demo --mode spectrum --once
---demo --mode cycle
-```
-
-Requirements:
-
-- `status` uses deterministic synthetic `MixxxStatus` data and the production status renderer.
-- `spectrum` uses deterministic synthetic audio and the production spectrum renderer.
-- `cycle` switches modes only in demo mode; live mode remains controlled by the BUSY physical switch.
-- Add deterministic unit tests for all three modes.
-
-### 2. Prepare the gallery application
+### 1. Prepare the gallery application
 
 Create the release artifact under `apps/mixxx-display/` in a `busybar-apps` checkout:
 
@@ -62,7 +46,7 @@ Requirements:
 - The artifact does not depend on helper files outside its app folder.
 - The existing modular source repository remains the canonical development source.
 
-### 3. Align the application contract
+### 2. Align the application contract
 
 Verify and test:
 
@@ -75,7 +59,7 @@ Verify and test:
 - the display state is released on shutdown;
 - `BUSY_API_TOKEN` remains outside version control.
 
-### 4. Add gallery metadata
+### 3. Add gallery metadata
 
 Create `manifest.yaml` with only the fields supported by the gallery schema:
 
@@ -88,7 +72,7 @@ Create `manifest.yaml` with only the fields supported by the gallery schema:
 
 Do not add a `license` field to the manifest.
 
-### 5. Generate and validate preview
+### 4. Generate and validate preview
 
 Use the gallery preview tooling:
 
@@ -101,7 +85,7 @@ The result must be a real emulator or BUSY Bar output with dimensions `720×160`
 
 For a real device, use the preview recorder with an upstream BUSY host. The emulator can be used for deterministic layout validation without Mixxx hardware.
 
-### 6. Run release validation
+### 5. Run release validation
 
 In the source repository:
 
@@ -129,7 +113,7 @@ Mixxx → ALSA/Pulse → ffmpeg → spectrum → BUSY Bar
 BUSY START/PRESS → status/spectrum
 ```
 
-### 7. Commit and submit
+### 6. Commit and submit
 
 - [ ] Add all intended source and documentation files to Git.
 - [ ] Verify no environment files, tokens, or recordings are included.
@@ -142,6 +126,7 @@ BUSY START/PRESS → status/spectrum
 
 The following items are outside the first gallery release:
 
+- mode-specific demo flags (`--mode status`, `--mode spectrum`, `--mode cycle`); the accepted demo loop remains the release preview path;
 - systemd automatic startup and recovery;
 - PipeWire migration;
 - track information mode;
@@ -154,12 +139,11 @@ The following items are outside the first gallery release:
 
 The release is not ready until these are complete:
 
-1. Full demo modes are implemented and tested.
-2. The single-file gallery artifact exists.
-3. Manifest validation passes.
-4. A real 720×160 preview is generated.
-5. Gallery `build`, `check`, and `ai:sync` commands pass.
-6. A hardware end-to-end smoke test is completed.
+1. The single-file gallery artifact exists.
+2. Manifest validation passes.
+3. A real 720×160 preview is generated.
+4. Gallery `build`, `check`, and `ai:sync` commands pass.
+5. A hardware end-to-end smoke test is completed.
 
 ## Technical review
 

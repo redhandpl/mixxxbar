@@ -15,12 +15,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 import os
 import queue
 import struct
 import sys
 import threading
 import time
+from contextlib import suppress
 from typing import Any
 
 try:
@@ -40,7 +42,6 @@ try:
     from .mixxx_spectrum import (
         BAND_COUNT,
         CHUNK_SAMPLES,
-        DEFAULT_FPS as DEFAULT_SPECTRUM_FPS,
         STYLE_NAMES,
         THEME_NAMES,
         BusyBarOutput,
@@ -50,6 +51,7 @@ try:
         spectrum_heights,
         start_capture,
     )
+    from .mixxx_spectrum import DEFAULT_FPS as DEFAULT_SPECTRUM_FPS
 except ImportError:
     from mixxx_mixer import (
         DEFAULT_DISPLAY_INTERVAL,
@@ -67,7 +69,6 @@ except ImportError:
     from mixxx_spectrum import (
         BAND_COUNT,
         CHUNK_SAMPLES,
-        DEFAULT_FPS as DEFAULT_SPECTRUM_FPS,
         STYLE_NAMES,
         THEME_NAMES,
         BusyBarOutput,
@@ -77,6 +78,7 @@ except ImportError:
         spectrum_heights,
         start_capture,
     )
+    from mixxx_spectrum import DEFAULT_FPS as DEFAULT_SPECTRUM_FPS
 
 SWITCH_MODE_STATUS = "status"
 SWITCH_MODE_SPECTRUM = "spectrum"
@@ -160,12 +162,15 @@ def protobuf_toggle_event(state: Any) -> str | None:
 async def monitor_switch(host: str, token: str, mode: DisplayMode, stop: threading.Event) -> None:
     """Toggle display mode from BUSY start-button or switch events."""
     from busylib import AsyncBusyBar  # pyright: ignore[reportMissingImports]
-    from busylib.state_stream_proto import state_pb2  # pyright: ignore[reportMissingImports]
+    from busylib.state_stream_proto import (
+        state_pb2,  # pyright: ignore[reportMissingImports]
+    )
 
     last_event: str | None = None
     while not stop.is_set():
         try:
-            async with AsyncBusyBar(host, token=token, timeout=5, max_retries=0) as busy_bar:
+            async with AsyncBusyBar(host, token=token, timeout=5, max_retries=0) as raw_busy_bar:
+                busy_bar: Any = raw_busy_bar
                 stream: Any = busy_bar.stream_status_ws(decode_protobuf=False)
                 while not stop.is_set():
                     try:
@@ -176,7 +181,7 @@ async def monitor_switch(host: str, token: str, mode: DisplayMode, stop: threadi
                         break
                     if not isinstance(raw_state, bytes):
                         continue
-                    state = state_pb2.State()
+                    state = state_pb2.State()  # type: ignore[reportAttributeAccessIssue]
                     state.ParseFromString(raw_state)
                     event = protobuf_toggle_event(state)
                     if event is None:
@@ -224,10 +229,8 @@ class AudioReader:
             try:
                 self.samples.put_nowait(values)
             except queue.Full:
-                try:
+                with suppress(queue.Empty):
                     self.samples.get_nowait()
-                except queue.Empty:
-                    pass
                 self.samples.put_nowait(values)
 
     def latest(self) -> list[float] | None:
@@ -261,22 +264,99 @@ def positive_float(value: str) -> float:
     return number
 
 
-def demo_status() -> MixxxStatus:
-    """Return a deterministic status frame for previews and local checks."""
+DEMO_CYCLE_SECONDS = 35.0
+DEMO_DECK_A_INITIAL_SECONDS = 45.0
+DEMO_DECK_B_INITIAL_SECONDS = 45.0
+DEMO_DECK_B_START_SECONDS = 15.0
+DEMO_DECK_A_RELOAD_SECONDS = 30.0
+DEMO_DECK_A_RELOAD_REMAINING_SECONDS = 50.0
+DEMO_DECK_A_RELOAD_BPM = 123.0
+DEMO_BPM_TUNE_SECONDS = 4.0
+DEMO_CROSSFADER_SECONDS = 6.0
+DEMO_DECK_B_RETURN_SECONDS = 5.0
+
+
+def demo_status(frame: int = 0, elapsed_seconds: float | None = None) -> MixxxStatus:
+    """Return a deterministic DJ transition for previews and local checks."""
+    elapsed = frame if elapsed_seconds is None else elapsed_seconds
+    deck_a_reloaded = elapsed >= DEMO_DECK_A_RELOAD_SECONDS
+    deck_b_started = elapsed >= DEMO_DECK_B_START_SECONDS
+    return_progress = min(
+        1.0,
+        max(
+            0.0,
+            (elapsed - DEMO_DECK_A_RELOAD_SECONDS) / DEMO_DECK_B_RETURN_SECONDS,
+        ),
+    )
+    return_ease = return_progress * return_progress * (3.0 - 2.0 * return_progress)
+    deck1_elapsed = (
+        elapsed - DEMO_DECK_A_RELOAD_SECONDS if deck_a_reloaded else elapsed
+    )
+    deck1_remaining = max(
+        0,
+        round(
+            (DEMO_DECK_A_RELOAD_REMAINING_SECONDS - deck1_elapsed)
+            if deck_a_reloaded
+            else (DEMO_DECK_A_INITIAL_SECONDS - elapsed)
+        ),
+    )
+    if not deck_b_started:
+        deck2_remaining = round(DEMO_DECK_B_INITIAL_SECONDS)
+    elif not deck_a_reloaded:
+        deck2_remaining = max(
+            0,
+            round(DEMO_DECK_B_INITIAL_SECONDS - (elapsed - DEMO_DECK_B_START_SECONDS)),
+        )
+    else:
+        deck2_remaining = round(DEMO_DECK_B_INITIAL_SECONDS)
+    deck1_playing = True
+    deck2_playing = deck_b_started and not deck_a_reloaded and deck2_remaining > 0
+    deck1_phase = (elapsed % DEMO_CYCLE_SECONDS) / DEMO_CYCLE_SECONDS * math.tau
+    deck2_phase = max(0.0, elapsed - DEMO_DECK_B_START_SECONDS) / 0.8
+    deck_b_tune_progress = min(
+        1.0,
+        max(0.0, (elapsed - DEMO_DECK_B_START_SECONDS) / DEMO_BPM_TUNE_SECONDS),
+    )
+    if deck_a_reloaded:
+        deck_b_tune_progress = 0.0
+    deck_a_tune_progress = min(
+        1.0,
+        max(0.0, (elapsed - DEMO_DECK_A_RELOAD_SECONDS) / DEMO_BPM_TUNE_SECONDS),
+    )
+    crossfade_to_b_progress = min(
+        1.0,
+        max(
+            0.0,
+            (elapsed - DEMO_DECK_B_START_SECONDS - DEMO_BPM_TUNE_SECONDS)
+            / DEMO_CROSSFADER_SECONDS,
+        ),
+    )
+    crossfade_progress = 1.0 - return_ease if deck_a_reloaded else crossfade_to_b_progress
+    deck1_pulse = max(0.0, 64 + 55 * math.sin(deck1_phase * 1.7))
+    deck2_pulse = max(0.0, 64 + 55 * math.sin(deck2_phase * 1.3 + 1.0))
+    deck1_level = 0 if not deck1_playing else round(deck1_pulse)
+    deck2_level = 0 if not deck2_playing else round(deck2_pulse)
+    crossfader = round(127 * crossfade_progress)
     return MixxxStatus(
-        deck1_bpm=124.6,
-        deck2_bpm=128.0,
-        deck1_remaining_seconds=215,
-        deck2_remaining_seconds=180,
-        deck1_playing=True,
-        deck2_playing=True,
-        active_deck=1,
-        deck1_level=96,
-        deck2_level=72,
-        deck1_volume=110,
-        deck2_volume=96,
-        crossfader=64,
-        main_level=104,
+        deck1_bpm=(
+            round(DEMO_DECK_A_RELOAD_BPM + 2.0 * deck_a_tune_progress, 1)
+            if deck_a_reloaded
+            else 125.0
+        ),
+        deck2_bpm=round(127.0 - 2.0 * deck_b_tune_progress, 1),
+        deck1_remaining_seconds=deck1_remaining,
+        deck2_remaining_seconds=deck2_remaining,
+        deck1_playing=deck1_playing,
+        deck2_playing=deck2_playing,
+        active_deck=2 if deck2_playing and crossfade_progress >= 0.5 else 1,
+        deck1_level=deck1_level,
+        deck2_level=deck2_level,
+        deck1_volume=round(127 - 35 * crossfade_progress) if deck1_playing else 0,
+        deck2_volume=round(5 if not deck_b_started else 80 + 47 * crossfade_progress)
+        if deck2_playing
+        else 0,
+        crossfader=crossfader,
+        main_level=round(max(deck1_level, deck2_level) * 0.85),
     )
 
 
@@ -316,11 +396,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run_demo(args: argparse.Namespace, display: BusyBarDisplay) -> int:
-    status = demo_status()
+    frame = 0
+    previous_cycle_elapsed: float | None = None
     while True:
-        display.show(status)
+        elapsed = frame * args.display_interval
+        cycle_elapsed = elapsed % DEMO_CYCLE_SECONDS
+        if previous_cycle_elapsed is not None and cycle_elapsed < previous_cycle_elapsed:
+            display.animation_phases = [0, 0]
+            display.initial_clear = True
+        status = demo_status(frame, cycle_elapsed)
+        warning_active = (
+            0 < status.deck1_remaining_seconds <= REMAINING_WARNING_SECONDS
+            or 0 < status.deck2_remaining_seconds <= REMAINING_WARNING_SECONDS
+        )
+        blink_red = warning_active and (cycle_elapsed // REMAINING_BLINK_INTERVAL) % 2 == 0
+        display.show(status, blink_red=blink_red)
         if args.once:
             return 0
+        previous_cycle_elapsed = cycle_elapsed
+        frame += 1
         time.sleep(args.display_interval)
 
 

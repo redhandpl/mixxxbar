@@ -21,8 +21,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Sequence
+from typing import Any
 
 APP_NAME = "mixxx_busybar"
 DEFAULT_MIDI_PORT = "BUSYBAR Mixxx Status"
@@ -53,7 +54,16 @@ MAIN_VOLUME_HEIGHT = DISPLAY_HEIGHT - MAIN_VOLUME_Y
 DECK_ICON_X = (5, 59)
 DECK_ICON_Y = 4
 DECK_ICON_SIZE = 8
-DECK_ICON_RADIUS = 4
+DECK_ICON_RING_SEGMENTS = (
+    (2, 0, 4, 1),
+    (1, 1, 1, 1),
+    (6, 1, 1, 1),
+    (0, 2, 1, 4),
+    (7, 2, 1, 4),
+    (1, 6, 1, 1),
+    (6, 6, 1, 1),
+    (2, 7, 4, 1),
+)
 DECK_MARKER_POSITIONS = ((3, 0), (6, 3), (3, 6), (0, 3))
 DECK_ICON_DIM_LEVEL = 127 * 0.07
 DECK_ICON_DIM_COLOR = "#606060FF"
@@ -249,8 +259,12 @@ def level_segments(
     return segments
 
 
-def deck_icon_color(level: int) -> str:
-    return DECK_ICON_DIM_COLOR if level < DECK_ICON_DIM_LEVEL else COLORS["unknown"]
+def deck_icon_color(level: int, playing: bool = True) -> str:
+    return (
+        DECK_ICON_DIM_COLOR
+        if not playing or level < DECK_ICON_DIM_LEVEL
+        else COLORS["unknown"]
+    )
 
 
 def balance_marker_position(value: int) -> int:
@@ -467,29 +481,32 @@ class BusyBarDisplay:
                 timeout=self.display_timeout,
             )
         )
-        for deck, x, volume in (
-            (1, DECK_ICON_X[0], status.deck1_volume),
-            (2, DECK_ICON_X[1], status.deck2_volume),
+        for deck, x, volume, playing in (
+            (1, DECK_ICON_X[0], status.deck1_volume, status.deck1_playing),
+            (2, DECK_ICON_X[1], status.deck2_volume, status.deck2_playing),
         ):
-            icon_color = deck_icon_color(volume)
+            icon_color = deck_icon_color(volume, playing)
             phase = (self.animation_phases[deck - 1] + deck - 1) % len(DECK_MARKER_POSITIONS)
             marker_x, marker_y = DECK_MARKER_POSITIONS[phase]
             elements.extend(
+                self.types.RectangleElement(
+                    id=f"mixxx-deck-{deck}-ring-{index}",
+                    type="rectangle",
+                    x=x + segment_x,
+                    y=DECK_ICON_Y + segment_y,
+                    width=segment_width,
+                    height=segment_height,
+                    fill="solid",
+                    fill_colors=[icon_color],
+                    border_width=0,
+                    display=self.types.DisplayName.FRONT,
+                    timeout=self.display_timeout,
+                )
+                for index, (segment_x, segment_y, segment_width, segment_height)
+                in enumerate(DECK_ICON_RING_SEGMENTS)
+            )
+            elements.extend(
                 (
-                    self.types.RectangleElement(
-                        id=f"mixxx-deck-{deck}-circle",
-                        type="rectangle",
-                        x=x,
-                        y=DECK_ICON_Y,
-                        width=DECK_ICON_SIZE,
-                        height=DECK_ICON_SIZE,
-                        radius=DECK_ICON_RADIUS,
-                        fill="none",
-                        border_width=1,
-                        border_color=icon_color,
-                        display=self.types.DisplayName.FRONT,
-                        timeout=self.display_timeout,
-                    ),
                     self.types.RectangleElement(
                         id=f"mixxx-deck-{deck}-hub",
                         type="rectangle",
@@ -565,6 +582,7 @@ class BusyBarDisplay:
             for phase, playing in zip(
                 self.animation_phases,
                 (status.deck1_playing, status.deck2_playing),
+                strict=True,
             )
         ]
         failures = self._draw(
@@ -588,13 +606,14 @@ def open_midi_input(port_name: str, *, virtual: bool) -> Any:
             "Install MIDI dependencies first: python -m pip install -r requirements.txt"
         ) from exc
 
+    mido_api: Any = mido
     try:
         backend = os.environ.get("MIDO_BACKEND")
         if backend is None and sys.platform.startswith("linux"):
             backend = "mido.backends.rtmidi/LINUX_ALSA"
         if backend is not None:
-            mido.set_backend(backend)
-        return mido.open_ioport(
+            mido_api.set_backend(backend)
+        return mido_api.open_ioport(
             port_name,
             virtual=virtual,
             client_name=port_name if virtual else None,
@@ -655,11 +674,12 @@ class MidiOutputConnector:
             import mido  # type: ignore[reportMissingImports]
         except ImportError:
             return
+        mido_api: Any = mido
         while not self.stop.is_set():
             bridge_input = next(
                 (
                     _midi_port_address(name)
-                    for name in mido.get_input_names()
+                    for name in mido_api.get_input_names()
                     if name.startswith(f"{self.port_name}:")
                 ),
                 None,

@@ -1,3 +1,9 @@
+<h1 align="center">mixxxbar</h1>
+
+<p align="center">
+  <img src="assets/preview.gif" alt="Mixxx Bar demo preview" />
+</p>
+
 # BUSY Bar Mixxx Apps
 
 ## Overview

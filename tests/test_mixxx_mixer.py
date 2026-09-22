@@ -4,31 +4,31 @@
 from __future__ import annotations
 
 import unittest
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import MagicMock
 
 from mixxx_mixer import (
+    BPM_X,
+    DECK_ICON_RING_SEGMENTS,
+    DECK_ICON_X,
+    VOLUME_BAR_WIDTH,
+    VOLUME_BAR_X,
     BusyBarDisplay,
     MidiOutputConnector,
     MixxxStatus,
     _midi_port_address,
     balance_marker_position,
     bpm_color,
-    decode_sysex,
     deck_icon_color,
+    decode_sysex,
     display_lines,
     encode_sysex,
     format_remaining,
     level_fill_height,
     level_segments,
-    remaining_color,
     next_animation_phase,
+    remaining_color,
     update_status_from_midi_message,
-    VOLUME_BAR_X,
-    VOLUME_BAR_WIDTH,
-    DECK_ICON_X,
-    BPM_X,
 )
 
 
@@ -131,6 +131,19 @@ class MixxxStatusTests(unittest.TestCase):
         self.assertEqual(VOLUME_BAR_X, (0, 69))
         self.assertEqual(VOLUME_BAR_WIDTH, 3)
         self.assertEqual(DECK_ICON_X, (5, 59))
+        self.assertEqual(
+            {(x + dx, y + dy) for x, y, width, height in DECK_ICON_RING_SEGMENTS for dx in range(width) for dy in range(height)},
+            {
+                (2, 0), (3, 0), (4, 0), (5, 0),
+                (1, 1), (6, 1),
+                (0, 2), (7, 2),
+                (0, 3), (7, 3),
+                (0, 4), (7, 4),
+                (0, 5), (7, 5),
+                (1, 6), (6, 6),
+                (2, 7), (3, 7), (4, 7), (5, 7),
+            },
+        )
         self.assertEqual(BPM_X, (15, 39))
         self.assertEqual(level_fill_height(0), 0)
         self.assertEqual(level_fill_height(64), 8)
@@ -144,6 +157,7 @@ class MixxxStatusTests(unittest.TestCase):
         self.assertEqual(full_segments["red"], (0, 3, "#FF0000FF"))
         self.assertEqual(deck_icon_color(8), "#606060FF")
         self.assertEqual(deck_icon_color(9), "#FFFFFFFF")
+        self.assertEqual(deck_icon_color(127, False), "#606060FF")
         self.assertEqual(next_animation_phase(2, False), 2)
         self.assertEqual(next_animation_phase(2, True), 3)
         self.assertEqual(next_animation_phase(3, True), 0)
@@ -182,14 +196,12 @@ class MixxxStatusTests(unittest.TestCase):
         self.assertTrue(connector.stop.is_set())
 
     def test_mapping_is_script_only_and_references_bridge_script(self) -> None:
-        root = ET.parse(Path(__file__).parents[1] / "mixxx_mapping" / "mixxx_busybar.midi.xml").getroot()
+        mapping = (Path(__file__).parents[1] / "mixxx_mapping" / "mixxx_busybar.midi.xml").read_text()
 
-        self.assertEqual(root.tag, "MixxxMIDIPreset")
-        script = root.find("./controller/scriptfiles/file")
-        if script is None:
-            self.fail("mapping does not reference a script file")
-        self.assertEqual(script.get("filename"), "mixxx_busybar.js")
-        self.assertEqual(len(root.findall("./controller/controls/control")), 0)
+        self.assertIn("<MixxxMIDIPreset", mapping)
+        self.assertIn('filename="mixxx_busybar.js"', mapping)
+        self.assertNotIn("<control ", mapping)
+        self.assertNotIn("<control>", mapping)
 
 
 if __name__ == "__main__":
