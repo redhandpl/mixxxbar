@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MixxxMIDIPreset mixxxVersion="2.0.0+" schemaVersion="1">
+    <info>
+        <name>BUSYBAR Mixxx Status</name>
+        <author>busybar</author>
+        <description>Export Mixxx deck status to the BUSYBAR network bridge.</description>
+    </info>
+    <controller id="BUSYBAR Mixxx Status">
+        <scriptfiles>
+            <file filename="mixxx_busybar.js" functionprefix="BusyBarMixxx"/>
+        </scriptfiles>
+        <controls>
+        </controls>
+    </controller>
+</MixxxMIDIPreset>
