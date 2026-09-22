@@ -2,15 +2,30 @@
 
 ## Overview
 
-This repository contains a unified Linux application and two standalone components for a BUSY Bar connected over the network:
+This project connects Mixxx to a network-connected BUSY Bar and turns a DJ session into a live 72×16 performance dashboard.
 
-- `mixxx_display.py` — recommended unified app; switches between status and spectrum when the BUSY Bar physical switch changes position.
-- `mixxx_mixer.py` — standalone Mixxx status display.
-- `mixxx_spectrum.py` — standalone audio spectrum display.
+The recommended application, `mixxx_display.py`, combines two views in one process:
 
-The BUSY Bar is expected at `10.26.16.123` in the examples below. Replace that address when required.
+- **Status mode** — displays both deck BPM values, remaining track time, play state, active-deck activity, deck and master levels, crossfader position, and animated deck indicators.
+- **Spectrum mode** — captures Mixxx's master output through ALSA or Pulse/PipeWire and renders a 24-band spectrum with selectable styles and colour themes.
 
-`mixxx_display.py` is the aggregator: it reuses the status pipeline from `mixxx_mixer.py` and the audio/rendering pipeline from `mixxx_spectrum.py` in one process. Only one full-screen mode is active at a time. It starts in status mode and toggles to spectrum mode on each physical `START/PRESS` event; no timed rotation is used.
+Press the physical BUSY Bar `START/PRESS` button to switch between the two full-screen views. Switch-position events are also supported as a fallback. The application does not rotate views on a timer.
+
+The data flow is:
+
+```text
+Mixxx MIDI mapping → Mixxx status → mixxx_display.py → BUSY Bar
+Mixxx master audio → ALSA/Pulse capture → spectrum renderer → BUSY Bar
+BUSY START/PRESS → status/spectrum mode switch
+```
+
+The repository also contains the underlying standalone components:
+
+- `mixxx_mixer.py` — Mixxx MIDI status bridge and status-only display.
+- `mixxx_spectrum.py` — audio capture and spectrum-only display.
+- `mixxx_mapping/` — the Mixxx controller mapping that exports status and level data.
+
+The application targets a Linux host running Mixxx 2.5 or newer. Examples below use `10.26.16.123` as the BUSY Bar address; replace it with the address of your device.
 
 ## Prerequisites
 
