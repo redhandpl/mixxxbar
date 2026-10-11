@@ -7,7 +7,7 @@
 - Gallery author: `redhandpl`.
 - Copyright holder: Krzysztof Pędrys.
 - License: MIT.
-- Runtime requirements: Linux, Mixxx 2.5+, ALSA/Pulse, and `ffmpeg`.
+- Runtime requirements: Linux, Mixxx 2.5+, PipeWire/Pulse capture by default, ALSA loopback fallback, and `ffmpeg`.
 - Target repository: [`maxswinkels/busybar-apps`](https://github.com/maxswinkels/busybar-apps).
 
 ## Current status
@@ -21,7 +21,8 @@ Completed:
 - [x] Demo sequence covers deck start, BPM tuning, crossfader handoff, reload, and cycle reset.
 - [x] BUSY delivery errors, `409` handling, resource cleanup, and end-of-track icon state are covered.
 - [x] Pixel-based deck icons are used for emulator and hardware parity.
-- [x] 26 unit tests pass.
+- [x] PipeWire/Pulse capture is the default; ALSA loopback remains an explicit fallback.
+- [x] 28 unit tests pass.
 - [x] Python syntax and LSP diagnostics are clean.
 
 ## Critical path
@@ -109,7 +110,7 @@ Perform one hardware end-to-end check:
 
 ```text
 Mixxx → MIDI mapping → mixxx_display.py → BUSY Bar
-Mixxx → ALSA/Pulse → ffmpeg → spectrum → BUSY Bar
+Mixxx → PipeWire monitor (default) or ALSA loopback (fallback) → ffmpeg → spectrum → BUSY Bar
 BUSY START/PRESS → status/spectrum
 ```
 
@@ -128,7 +129,6 @@ The following items are outside the first gallery release:
 
 - mode-specific demo flags (`--mode status`, `--mode spectrum`, `--mode cycle`); the accepted demo loop remains the release preview path;
 - systemd automatic startup and recovery;
-- PipeWire migration;
 - track information mode;
 - centralized runtime configuration;
 - full restart and recovery matrix;

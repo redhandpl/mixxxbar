@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the planned migration from the current ALSA loopback path to PipeWire for Mixxx audio capture.
+This document records the completed PipeWire-default audio path validated on the Raspberry Pi DAC Pro host and provides a setup/validation procedure for other hosts. PipeWire/Pulse is now the repository default; ALSA loopback remains an explicit fallback.
 
 The selected approach is **Option A**:
 
@@ -16,9 +16,9 @@ Mixxx
           → BUSY Bar
 ```
 
-The existing ALSA loopback path remains the rollback and compatibility path.
+The ALSA loopback path remains the rollback and compatibility path.
 
-No PipeWire packages, user services, Mixxx settings, or host audio routes are changed by this repository plan.
+The repository does not modify host packages, user services, Mixxx settings, or audio routes. The validated target already has PipeWire/Pulse running; the setup commands below apply when configuring another host.
 
 ## Scope
 
@@ -28,7 +28,8 @@ In scope:
 - verify that Mixxx can output through PipeWire/Pulse;
 - verify that `ffmpeg` can capture the sink monitor;
 - run the spectrum renderer with `--audio-format pulse`;
-- update the documented runtime command after successful validation;
+- use Pulse capture and the verified DAC Pro monitor as the repository defaults;
+- allow other hosts to override the monitor with `--audio-device`;
 - preserve ALSA as a documented fallback.
 
 Out of scope:
@@ -44,7 +45,7 @@ Out of scope:
 
 - Linux host running Mixxx 2.5 or newer.
 - Working physical audio output.
-- Existing ALSA configuration documented in `README.md`.
+- Existing ALSA fallback configuration documented in `README.md`.
 - `ffmpeg` installed.
 - A valid BUSY Bar host and `BUSY_API_TOKEN` for application tests.
 - Permission to install packages and manage user services.
@@ -148,6 +149,8 @@ ffmpeg \
 
 The command must exit successfully while Mixxx is playing.
 
+The Raspberry Pi DAC Pro monitor validated for this repository is `alsa_output.platform-soc_sound.stereo-fallback.monitor`. Monitor names are host-specific. On the target host, `ffmpeg` captured a non-silent signal from this source while Mixxx played.
+
 Then run the standalone spectrum application:
 
 ```bash
@@ -168,20 +171,19 @@ Finally test the unified application:
   <busybar-host>
 ```
 
-The existing application code already supports `--audio-format pulse`; this migration changes the runtime audio source, not the spectrum algorithm.
+Both CLI entrypoints now default to `--audio-format pulse` and the verified monitor. Pass `--audio-device` to select another host's monitor; `--audio-format alsa --audio-device mixxx_capture` remains the explicit fallback. The spectrum algorithm is unchanged.
 
-## Phase 5: Update runtime documentation and services
+## Phase 5: Runtime defaults and host-specific services
 
-After successful manual validation:
+The repository defaults and `README.md` service examples now use PipeWire/Pulse with the verified DAC Pro monitor. On another host:
 
-- document the tested sink monitor name or discovery procedure in `README.md`;
-- update the unified application command to use `--audio-format pulse`;
-- remove the PipeWire profile's dependency on `mixxx-alsaloop.service`;
-- keep the ALSA service and commands documented as fallback;
-- document that only one audio route may be active at a time;
-- record the tested sample rate and channel configuration.
+- discover its monitor with `pactl list short sources` and override it with `--audio-device`;
+- run PipeWire user services as the same user that runs Mixxx;
+- keep `mixxx-alsaloop.service` disabled in the PipeWire profile;
+- when selecting the ALSA fallback, pass `--audio-format alsa --audio-device mixxx_capture` and enable the ALSA forwarder;
+- run only one audio route at a time.
 
-Do not delete the ALSA configuration until the PipeWire path has passed the hardware smoke test and rollback has been verified.
+The repository does not install or enable host services. Keep the ALSA configuration until PipeWire has passed the hardware smoke test and rollback has been verified.
 
 ## Validation criteria
 
@@ -270,9 +272,8 @@ Confirm that the sink monitor still exists and restart the application after Pip
 - The physical sink monitor may include non-Mixxx audio.
 - Sink and monitor names are host-specific and may change after hardware or profile changes.
 - User services depend on the active user session and may require linger for boot-time startup.
-- PipeWire restarts can temporarily interrupt both physical audio and spectrum capture.
-- No automatic recovery policy is introduced by this migration plan.
+- PipeWire restarts can temporarily interrupt physical audio and spectrum capture; no automatic recovery policy is configured.
 
 ## Technical review
 
-Review this document and the host-specific inventory before executing Phase 2. The migration changes the user audio graph and can interrupt physical playback. A tested rollback is required before removing or disabling the ALSA fallback.
+Review the host-specific inventory before installing packages or changing Mixxx routing on another host. PipeWire changes the user audio graph and can interrupt physical playback. Verify the ALSA rollback before disabling its configuration.

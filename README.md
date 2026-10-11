@@ -4,8 +4,6 @@
   <img src="assets/preview.gif" alt="Mixxx Bar demo preview" />
 </p>
 
-# BUSY Bar Mixxx Apps
-
 ## Overview
 
 This project connects Mixxx to a network-connected BUSY Bar and turns a DJ session into a live 72×16 performance dashboard.
@@ -13,7 +11,7 @@ This project connects Mixxx to a network-connected BUSY Bar and turns a DJ sessi
 The recommended application, `mixxx_display.py`, combines two views in one process:
 
 - **Status mode** — displays both deck BPM values, remaining track time, play state, active-deck activity, deck and master levels, crossfader position, and animated deck indicators.
-- **Spectrum mode** — captures Mixxx's master output through ALSA or Pulse/PipeWire and renders a 24-band spectrum with selectable styles and colour themes.
+- **Spectrum mode** — captures Mixxx's master output from a PipeWire/Pulse sink monitor by default and renders a 24-band spectrum. ALSA loopback remains an explicit fallback.
 
 Press the physical BUSY Bar `START/PRESS` button to switch between the two full-screen views. Switch-position events are also supported as a fallback. The application does not rotate views on a timer.
 
@@ -21,7 +19,7 @@ The data flow is:
 
 ```text
 Mixxx MIDI mapping → Mixxx status → mixxx_display.py → BUSY Bar
-Mixxx master audio → ALSA/Pulse capture → spectrum renderer → BUSY Bar
+Mixxx master audio → PipeWire sink monitor → ffmpeg Pulse capture → spectrum renderer → BUSY Bar
 BUSY START/PRESS → status/spectrum mode switch
 ```
 
@@ -41,24 +39,25 @@ Install the system packages:
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-venv ffmpeg alsa-utils
+sudo apt install -y python3 python3-venv ffmpeg alsa-utils pipewire pipewire-pulse wireplumber pipewire-alsa pulseaudio-utils
 ```
 
 The host needs:
 
 - Mixxx 2.5 or newer;
-- a working ALSA playback device;
-- the `snd-aloop` kernel module;
-- `alsaloop`, `aplay`, and `arecord`;
+- PipeWire, `pipewire-pulse`, and WirePlumber;
+- a physical DAC sink with a monitor source visible through `pactl`;
+- `ffmpeg` built with Pulse input support;
+- `alsa-utils` for MIDI utilities and the optional ALSA fallback (`snd-aloop`, `alsaloop`, `aplay`, and `arecord`);
 - network access from the Mixxx host to the BUSY Bar;
 - a BUSY API token.
 
 ## Install the repository
 
-Place the repository at `/home/pi/busybar` or adjust every path in the service examples below.
+Place the repository at `/home/pi/mixxxbar` or adjust every path in the service examples below.
 
 ```bash
-cd /home/pi/busybar
+cd /home/pi/mixxxbar
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
@@ -66,10 +65,10 @@ python3 -m venv .venv
 Create a token file readable only by the `pi` user. Do not commit it:
 
 ```bash
-cat > /home/pi/busybar/busybar.env <<'EOF'
+cat > /home/pi/mixxxbar/busybar.env <<'EOF'
 BUSY_API_TOKEN=replace-with-the-BUSY-API-token
 EOF
-chmod 600 /home/pi/busybar/busybar.env
+chmod 600 /home/pi/mixxxbar/busybar.env
 ```
 
 ## Run the unified switch-controlled application
@@ -77,15 +76,15 @@ chmod 600 /home/pi/busybar/busybar.env
 Start `mixxx_display.py` before Mixxx. It creates the virtual MIDI port that Mixxx must enumerate at startup.
 
 ```bash
-cd /home/pi/busybar
+cd /home/pi/mixxxbar
 set -a
 . ./busybar.env
 set +a
 
 .venv/bin/python mixxx_display.py \
   --port "BUSYBAR Mixxx Status" \
-  --audio-format alsa \
-  --audio-device mixxx_capture \
+  --audio-format pulse \
+  --audio-device alsa_output.platform-soc_sound.stereo-fallback.monitor \
   --display-interval 0.2 \
   --level-fps 25 \
   --spectrum-fps 15 \
@@ -94,7 +93,7 @@ set +a
   10.26.16.123
 ```
 
-The spectrum mode accepts the same styles and themes as `mixxx_spectrum.py` through `--style` and `--theme`.
+The PipeWire monitor above is the default for the tested Raspberry Pi DAC Pro. On another host, choose a source from `pactl list short sources` and pass it with `--audio-device`. The spectrum mode accepts the same styles and themes as `mixxx_spectrum.py` through `--style` and `--theme`.
 
 The first mode is the BPM/deck status view. A physical BUSY Bar `START` button press toggles between status and spectrum. Switch-position events are also accepted as a fallback. Input events are read from BUSY's `/api/status/ws` stream. No timed rotation is used.
 
@@ -106,8 +105,8 @@ The MIDI mapping exports BPM, play state, deck activity, and VU levels through a
 
 ```bash
 mkdir -p /home/pi/.mixxx/controllers
-cp /home/pi/busybar/mixxx_mapping/mixxx_busybar.js \
-   /home/pi/busybar/mixxx_mapping/mixxx_busybar.midi.xml \
+cp /home/pi/mixxxbar/mixxx_mapping/mixxx_busybar.js \
+   /home/pi/mixxxbar/mixxx_mapping/mixxx_busybar.midi.xml \
    /home/pi/.mixxx/controllers/
 ```
 
@@ -116,7 +115,7 @@ The bridge must be running before Mixxx starts. It creates the virtual MIDI devi
 Start the bridge before starting Mixxx:
 
 ```bash
-cd /home/pi/busybar
+cd /home/pi/mixxxbar
 set -a
 . ./busybar.env
 set +a
@@ -128,7 +127,7 @@ set +a
   10.26.16.123
 ```
 
-The Mixxx mapping sends status frames every 40 ms. `--level-fps 25` updates only the two volume bars at 25 FPS; `--display-interval` controls the slower BPM, remaining-time, and deck layout redraw. A centered 13-pixel top line shows the Mixxx crossfader balance. The 3-pixel center bar shows the `[Main]` master VU level. Volume bars are segmented: green from 0–50%, yellow from 50–80%, and red above 80%. Remaining time at 30 seconds or less alternates between white and red every 0.5 seconds. BPM colors show synchronization: cyan up to 0.15 BPM difference, blue up to 0.5, the same cyan/blue colors after normalizing a 1:2 or 2:1 relationship, and magenta for other larger differences; empty decks stay white. Deck icons use the channel fader (`volume`), not the VU meter: below 7% fader volume, the icon is dimmed.
+The Mixxx mapping sends status SysEx frames every 200 ms and level CC messages every 40 ms. `--level-fps 25` updates the two deck VU bars and the master VU bar at 25 FPS; `--display-interval` controls BPM, remaining-time, crossfader, and deck-layout redraws. A centered 13-pixel top line shows the Mixxx crossfader balance. The 3-pixel center bar shows the `[Main]` master VU level. Volume bars are segmented: green from 0–50%, yellow from 50–80%, and red above 80%. Remaining time at 30 seconds or less alternates between white and red every 0.5 seconds. BPM colors show synchronization: cyan up to 0.15 BPM difference, blue up to 0.5, the same cyan/blue colors after normalizing a 1:2 or 2:1 relationship, and magenta for other larger differences; empty decks stay white. Deck icons use the channel fader (`volume`), not the VU meter: below 7% fader volume, the icon is dimmed.
 
 In Mixxx:
 
@@ -141,9 +140,9 @@ The existing Arduino MIDI controller uses a separate mapping and remains unchang
 
 Audio capture failures include the ffmpeg error detail in the application log.
 
-## Configure the ALSA loopback for Mixxx audio
+## ALSA loopback fallback for Mixxx audio
 
-The spectrum application does not read audio from Mixxx's MIDI mapping. Mixxx must send its Master output to an ALSA loopback, and the loopback must be shared between the physical output forwarder and the spectrum application.
+The default is [PipeWire/Pulse](#default-audio-path-pipewire-monitor). Follow this section only when PipeWire capture is unavailable. The spectrum application does not read audio from Mixxx's MIDI mapping: in ALSA fallback mode, Mixxx sends Master output to an ALSA loopback shared between the physical output forwarder and the spectrum application.
 
 ### Load and persist `snd-aloop`
 
@@ -242,17 +241,17 @@ Mixxx Master
         └─ mixxx_spectrum.py
 ```
 
-## Optional: PipeWire monitor instead of ALSA loopback
+Start `mixxx_spectrum.py` or `mixxx_display.py` with `--audio-format alsa` to select this fallback; the default capture device becomes `mixxx_capture` and can be overridden with `--audio-device`. Do not run the ALSA and PipeWire routes at the same time.
 
-Installing `pactl` alone does not add a `PipeWire` entry to Mixxx. `pactl` is only a command-line client. The PipeWire server and its PulseAudio compatibility layer must also be installed and running.
+## Default audio path: PipeWire monitor
 
-Install the optional audio stack:
+PipeWire/Pulse is the default capture path. `pactl` is only a command-line client; Mixxx needs the PipeWire server and PulseAudio compatibility layer running. Run user-service commands as the same user that runs Mixxx (for example, `pi`), not as root.
+
+Install and enable the audio stack:
 
 ```bash
 sudo apt install -y pipewire pipewire-pulse wireplumber pipewire-alsa pulseaudio-utils
-systemctl --user enable --now pipewire
-systemctl --user enable --now pipewire-pulse
-systemctl --user enable --now wireplumber
+systemctl --user enable --now pipewire.service pipewire-pulse.service wireplumber.service
 ```
 
 Verify the server and available monitor sources:
@@ -263,35 +262,35 @@ pactl list short sinks
 pactl list short sources
 ```
 
-The server name should contain `PipeWire`. A monitor source normally ends with `.monitor`.
+The server name should contain `PipeWire`. A monitor source normally ends with `.monitor`. The tested Raspberry Pi DAC Pro source is `alsa_output.platform-soc_sound.stereo-fallback.monitor`; source names vary by host.
 
 PipeWire may not appear as a literal Mixxx **Sound API** entry. Mixxx can use it through an ALSA default device, JACK integration, or the PulseAudio compatibility layer, depending on the installed Mixxx build and host configuration.
 
-For a PipeWire monitor, stop the ALSA `alsaloop` route and configure Mixxx to use the PipeWire-routed DAC. Then run the spectrum app with:
+Configure Mixxx to send Master output to the physical PipeWire-routed DAC, then run the spectrum app. The default format and monitor match the tested Raspberry Pi DAC Pro; pass `--audio-device <sink-monitor-name>` on other hosts.
 
 ```bash
 .venv/bin/python mixxx_spectrum.py \
   --audio-format pulse \
-  --audio-device <sink-monitor-name> \
+  --audio-device alsa_output.platform-soc_sound.stereo-fallback.monitor \
   --fps 15 \
   10.26.16.123
 ```
 
-Do not run the ALSA loopback route and the PipeWire route at the same time. They are alternative audio paths.
+PipeWire and ALSA loopback are alternative audio paths; do not run both routes at once.
 
 ## Run the spectrum application manually
 
-Keep `alsaloop` running in one terminal. Start the spectrum application in another:
+PipeWire is the default capture path; no `alsaloop` process is needed. Start the spectrum application:
 
 ```bash
-cd /home/pi/busybar
+cd /home/pi/mixxxbar
 set -a
 . ./busybar.env
 set +a
 
 .venv/bin/python mixxx_spectrum.py \
-  --audio-format alsa \
-  --audio-device mixxx_capture \
+  --audio-format pulse \
+  --audio-device alsa_output.platform-soc_sound.stereo-fallback.monitor \
   --fps 15 \
   10.26.16.123
 ```
@@ -318,8 +317,6 @@ Select them with `--style` and `--theme`, for example:
 
 ```bash
 .venv/bin/python mixxx_spectrum.py \
-  --audio-format alsa \
-  --audio-device mixxx_capture \
   --style segments \
   --theme fire \
   --fps 15 \
@@ -345,9 +342,9 @@ Validate the capture source directly:
 ffmpeg \
   -hide_banner \
   -loglevel error \
-  -f alsa \
-  -i mixxx_capture \
-  -t 1 \
+  -f pulse \
+  -i alsa_output.platform-soc_sound.stereo-fallback.monitor \
+  -t 1 \\
   -ac 1 \
   -ar 22050 \
   -f null -
@@ -355,13 +352,13 @@ ffmpeg \
 
 ## Start automatically after reboot
 
-The following systemd user services start the loopback forwarder and one BUSY application after reboot. They assume the `pi` user and `/home/pi/busybar` paths.
+The following systemd user services start PipeWire audio and one BUSY application after reboot. They assume the `pi` user and `/home/pi/mixxxbar` paths. Run all `systemctl --user` commands as `pi`; the ALSA loopback forwarder is enabled only for fallback use.
 
 The MIDI bridge must start before Mixxx. If Mixxx is launched automatically by a desktop or sway session, make that autostart entry depend on the selected display service (`mixxx-display.service` is recommended); otherwise Mixxx will not see the virtual MIDI device.
 
-### ALSA forwarder service
+### ALSA fallback forwarder service
 
-Create `~/.config/systemd/user/mixxx-alsaloop.service`:
+For ALSA fallback, change the selected audio-enabled unit (`mixxx-display.service` or `mixxx-spectrum.service`) to use `--audio-format alsa --audio-device mixxx_capture`, add `Requires=mixxx-alsaloop.service` and `After=mixxx-alsaloop.service`, and reload the user units. Then create `~/.config/systemd/user/mixxx-alsaloop.service`:
 
 ```ini
 [Unit]
@@ -384,14 +381,13 @@ Create `~/.config/systemd/user/mixxx-display.service`:
 ```ini
 [Unit]
 Description=Switch-controlled Mixxx status and spectrum display
-Requires=mixxx-alsaloop.service
-After=mixxx-alsaloop.service
+After=pipewire-pulse.service
 
 [Service]
-WorkingDirectory=/home/pi/busybar
-EnvironmentFile=/home/pi/busybar/busybar.env
+WorkingDirectory=/home/pi/mixxxbar
+EnvironmentFile=/home/pi/mixxxbar/busybar.env
 Environment=MIDO_BACKEND=mido.backends.rtmidi/LINUX_ALSA
-ExecStart=/home/pi/busybar/.venv/bin/python /home/pi/busybar/mixxx_display.py --port BUSYBAR Mixxx Status --audio-format alsa --audio-device mixxx_capture --display-interval 0.2 --level-fps 25 --spectrum-fps 15 --style bars --theme classic 10.26.16.123
+ExecStart=/home/pi/mixxxbar/.venv/bin/python /home/pi/mixxxbar/mixxx_display.py --port "BUSYBAR Mixxx Status" --audio-format pulse --audio-device alsa_output.platform-soc_sound.stereo-fallback.monitor --display-interval 0.2 --level-fps 25 --spectrum-fps 15 --style bars --theme classic 10.26.16.123
 Restart=always
 RestartSec=3
 
@@ -408,13 +404,12 @@ Create `~/.config/systemd/user/mixxx-spectrum.service`:
 ```ini
 [Unit]
 Description=Display the Mixxx spectrum on BUSY Bar
-Requires=mixxx-alsaloop.service
-After=mixxx-alsaloop.service
+After=pipewire-pulse.service
 
 [Service]
-WorkingDirectory=/home/pi/busybar
-EnvironmentFile=/home/pi/busybar/busybar.env
-ExecStart=/home/pi/busybar/.venv/bin/python /home/pi/busybar/mixxx_spectrum.py --audio-format alsa --audio-device mixxx_capture --fps 15 10.26.16.123
+WorkingDirectory=/home/pi/mixxxbar
+EnvironmentFile=/home/pi/mixxxbar/busybar.env
+ExecStart=/home/pi/mixxxbar/.venv/bin/python /home/pi/mixxxbar/mixxx_spectrum.py --audio-format pulse --audio-device alsa_output.platform-soc_sound.stereo-fallback.monitor --fps 15 10.26.16.123
 Restart=always
 RestartSec=3
 
@@ -432,10 +427,10 @@ Description=Display Mixxx BPM and deck status on BUSY Bar
 After=default.target
 
 [Service]
-WorkingDirectory=/home/pi/busybar
-EnvironmentFile=/home/pi/busybar/busybar.env
+WorkingDirectory=/home/pi/mixxxbar
+EnvironmentFile=/home/pi/mixxxbar/busybar.env
 Environment=MIDO_BACKEND=mido.backends.rtmidi/LINUX_ALSA
-ExecStart=/home/pi/busybar/.venv/bin/python /home/pi/busybar/mixxx_mixer.py --port BUSYBAR Mixxx Status --display-interval 0.2 10.26.16.123
+ExecStart=/home/pi/mixxxbar/.venv/bin/python /home/pi/mixxxbar/mixxx_mixer.py --port "BUSYBAR Mixxx Status" --display-interval 0.2 10.26.16.123
 Restart=always
 RestartSec=3
 
@@ -452,7 +447,7 @@ For the unified switch-controlled mode:
 ```bash
 loginctl enable-linger pi
 systemctl --user daemon-reload
-systemctl --user enable --now mixxx-alsaloop.service
+systemctl --user enable --now pipewire.service pipewire-pulse.service wireplumber.service
 systemctl --user enable --now mixxx-display.service
 ```
 
@@ -461,15 +456,14 @@ For standalone operation, enable only one of `mixxx-spectrum.service` or `mixxx-
 Check service state and logs:
 
 ```bash
-systemctl --user status mixxx-alsaloop.service
-systemctl --user status mixxx-spectrum.service
-journalctl --user -u mixxx-alsaloop.service -f
-journalctl --user -u mixxx-spectrum.service -f
+systemctl --user status pipewire-pulse.service
+systemctl --user status mixxx-display.service
+journalctl --user -u mixxx-display.service -f
 ```
 
 ## Troubleshooting
 
-### `No such device: hw:Loopback`
+### ALSA fallback: `No such device: hw:Loopback`
 
 The configured card name is `MixxxLoopback`, not `Loopback`:
 
@@ -483,7 +477,7 @@ Use:
 hw:MixxxLoopback,1,0
 ```
 
-### `Device or resource busy`
+### ALSA fallback: `Device or resource busy`
 
 Check which process owns the ALSA device:
 
@@ -495,13 +489,14 @@ One `alsaloop` process should own the physical DAC and one shared `dsnoop` captu
 
 ### `ffmpeg audio capture ended`
 
-Check that:
+For the default PipeWire route, check that:
 
-- Mixxx Master output is `hw:MixxxLoopback,0,0`;
-- `alsaloop` is running with `-C mixxx_capture`;
-- the spectrum app uses `--audio-device mixxx_capture`;
-- the `mixxx_capture` definition exists in `/home/pi/.asoundrc`;
-- `arecord -l` still shows `MixxxLoopback`.
+- `pactl info` reports PipeWire and `pactl list short sources` includes the selected `.monitor` source;
+- Mixxx Master output is routed to the physical PipeWire DAC;
+- the spectrum app's `--audio-device` matches the monitor source;
+- `ffmpeg -devices` lists the Pulse input.
+
+For the ALSA fallback, confirm Mixxx Master output is `hw:MixxxLoopback,0,0`, `alsaloop` uses `-C mixxx_capture`, and `/home/pi/.asoundrc` defines `mixxx_capture`.
 
 ### BusyBar stays blank
 
@@ -515,7 +510,7 @@ Run the synthetic frame test with `--demo --once`. It removes audio routing from
 
 ## Limitations
 
-- The spectrum app requires an audio loopback. It does not read PCM data from Mixxx's MIDI mapping.
+- The default spectrum path requires a PipeWire sink monitor. The ALSA loopback remains an optional fallback; neither path reads PCM data from Mixxx's MIDI mapping.
 - The repository does not configure system audio automatically.
 - The spectrum and status apps are mutually exclusive on one full-screen BUSY Bar.
 - ALSA card numbers can change; use stable card names from `aplay -l` where possible.
