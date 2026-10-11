@@ -40,8 +40,12 @@ try:
         update_status_from_midi_message,
     )
     from .mixxx_spectrum import (
+        ALSA_FALLBACK_AUDIO_DEVICE,
         BAND_COUNT,
         CHUNK_SAMPLES,
+        DEFAULT_AUDIO_DEVICE,
+        DEFAULT_AUDIO_FORMAT,
+        DEFAULT_FPS as DEFAULT_SPECTRUM_FPS,
         STYLE_NAMES,
         THEME_NAMES,
         BusyBarOutput,
@@ -51,7 +55,6 @@ try:
         spectrum_heights,
         start_capture,
     )
-    from .mixxx_spectrum import DEFAULT_FPS as DEFAULT_SPECTRUM_FPS
 except ImportError:
     from mixxx_mixer import (
         DEFAULT_DISPLAY_INTERVAL,
@@ -67,8 +70,12 @@ except ImportError:
         update_status_from_midi_message,
     )
     from mixxx_spectrum import (
+        ALSA_FALLBACK_AUDIO_DEVICE,
         BAND_COUNT,
         CHUNK_SAMPLES,
+        DEFAULT_AUDIO_DEVICE,
+        DEFAULT_AUDIO_FORMAT,
+        DEFAULT_FPS as DEFAULT_SPECTRUM_FPS,
         STYLE_NAMES,
         THEME_NAMES,
         BusyBarOutput,
@@ -78,7 +85,6 @@ except ImportError:
         spectrum_heights,
         start_capture,
     )
-    from mixxx_spectrum import DEFAULT_FPS as DEFAULT_SPECTRUM_FPS
 
 SWITCH_MODE_STATUS = "status"
 SWITCH_MODE_SPECTRUM = "spectrum"
@@ -367,8 +373,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("host", nargs="?", help="BUSY Bar host or IP address")
     parser.add_argument("--host", dest="host_option", help="BUSY Bar host or IP address")
     parser.add_argument("--port", default="BUSYBAR Mixxx Status", help="virtual MIDI port name")
-    parser.add_argument("--audio-format", choices=("alsa", "pulse"), default="alsa")
-    parser.add_argument("--audio-device", default="mixxx_capture")
+    parser.add_argument("--audio-format", choices=("alsa", "pulse"), default=DEFAULT_AUDIO_FORMAT)
+    parser.add_argument("--audio-device", help="ffmpeg capture source; defaults follow audio format")
     parser.add_argument("--display-interval", type=positive_float, default=DEFAULT_DISPLAY_INTERVAL)
     parser.add_argument("--level-fps", type=positive_float, default=DEFAULT_LEVEL_FPS)
     parser.add_argument("--spectrum-fps", type=positive_float, default=DEFAULT_SPECTRUM_FPS)
@@ -387,6 +393,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="draw one demo frame and exit",
     )
     args = parser.parse_args(argv)
+    if args.audio_device is None:
+        args.audio_device = (
+            DEFAULT_AUDIO_DEVICE
+            if args.audio_format == DEFAULT_AUDIO_FORMAT
+            else ALSA_FALLBACK_AUDIO_DEVICE
+        )
     if args.host is not None and args.host_option is not None:
         parser.error("specify the BUSY Bar host either positionally or with --host")
     if args.once and not args.demo:

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Display a Mixxx output spectrum on a network-connected BUSY Bar.
 
-The app captures an OS audio loopback through ffmpeg, computes 24 spectrum
-bands with the Goertzel algorithm, renders one 72x16 PNG frame, and uploads it
-to BUSY. Mixxx must route its master output to the selected capture source.
+By default, the app captures the Raspberry Pi DAC Pro PipeWire sink monitor
+through ffmpeg. Override the capture source on other hosts; ALSA loopback
+remains available as a fallback. The app computes 24 spectrum bands with the
+Goertzel algorithm, renders one 72x16 PNG frame, and uploads it to BUSY.
 
 Examples:
     BUSY_API_TOKEN=... python mixxx_spectrum.py \
-        --audio-format alsa --audio-device hw:Loopback,1,0 10.26.16.123
+        --audio-format pulse --audio-device alsa_output.platform-soc_sound.stereo-fallback.monitor 10.26.16.123
     BUSY_API_TOKEN=... python mixxx_spectrum.py \
-        --audio-format pulse --audio-device mixxx.monitor 10.26.16.123
+        --audio-format alsa --audio-device mixxx_capture 10.26.16.123
 """
 
 from __future__ import annotations
@@ -25,7 +26,8 @@ import subprocess
 import sys
 import time
 import zlib
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 APP_NAME = "mixxx_spectrum"
 DISPLAY_WIDTH = 72
@@ -38,6 +40,10 @@ BAND_FREQS = tuple(
     for index in range(BAND_COUNT)
 )
 FRAME_RING_SIZE = 4
+# Host-specific default for the verified Raspberry Pi DAC Pro monitor.
+DEFAULT_AUDIO_FORMAT = "pulse"
+DEFAULT_AUDIO_DEVICE = "alsa_output.platform-soc_sound.stereo-fallback.monitor"
+ALSA_FALLBACK_AUDIO_DEVICE = "mixxx_capture"
 DEFAULT_FPS = 15
 DEFAULT_REQUEST_TIMEOUT = 5
 DELIVERY_LOG_INTERVAL = 5.0
@@ -303,7 +309,11 @@ class BusyBarOutput:
 
     def __init__(self, host: str, token: str, *, request_timeout: int) -> None:
         try:
-            from busylib import BusyBar, converter, types  # pyright: ignore[reportMissingImports]
+            from busylib import (
+                BusyBar,
+                converter,
+                types,
+            )  # pyright: ignore[reportMissingImports]
         except ImportError as exc:
             raise RuntimeError(
                 "Install dependencies first: python -m pip install -r requirements.txt"
@@ -444,8 +454,8 @@ def demo_samples(frame: int) -> list[float]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Display a Mixxx output spectrum on BUSY Bar.")
     parser.add_argument("host", help="BUSY Bar host or IP address")
-    parser.add_argument("--audio-format", choices=("alsa", "pulse"), default="alsa")
-    parser.add_argument("--audio-device", default="default", help="ffmpeg capture source")
+    parser.add_argument("--audio-format", choices=("alsa", "pulse"), default=DEFAULT_AUDIO_FORMAT)
+    parser.add_argument("--audio-device", help="ffmpeg capture source; defaults follow audio format")
     parser.add_argument("--fps", type=positive_int, default=DEFAULT_FPS)
     parser.add_argument("--style", choices=STYLE_NAMES, default="bars")
     parser.add_argument("--theme", choices=THEME_NAMES, default="classic")
@@ -453,7 +463,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--display-timeout", type=positive_int, default=3)
     parser.add_argument("--demo", action="store_true", help="use synthetic audio instead of ffmpeg")
     parser.add_argument("--once", action="store_true", help="draw one frame and exit")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.audio_device is None:
+        args.audio_device = (
+            DEFAULT_AUDIO_DEVICE
+            if args.audio_format == DEFAULT_AUDIO_FORMAT
+            else ALSA_FALLBACK_AUDIO_DEVICE
+        )
+    return args
 
 
 def run(args: argparse.Namespace) -> int:
